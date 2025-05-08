@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "../pytypes.h"
+#include "../types.h"
 #include "common.h"
 #include "descr.h"
 #include "internals.h"

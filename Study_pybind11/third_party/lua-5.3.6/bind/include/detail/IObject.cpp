@@ -76,4 +76,8 @@ IObject* IObject::dict_getItem(IObject* obj, IObject *key){
 
 }
 
+void herror_clear(){
+    //PyErr_Clear()
+}
+
 BIND11_NAMESPACE_END(BIND11_NAMESPACE)

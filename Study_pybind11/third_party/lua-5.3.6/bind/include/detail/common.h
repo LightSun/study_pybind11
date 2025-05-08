@@ -18,6 +18,19 @@
 
 BIND11_NAMESPACE_BEGIN(BIND11_NAMESPACE)
 
+#ifdef Py_ssize_t
+using ssize_t = Py_ssize_t;
+#else
+using ssize_t = unsigned long long;
+#endif
+using size_t = std::size_t;
+
+template <typename IntType>
+inline ssize_t ssize_t_cast(const IntType &val) {
+    static_assert(sizeof(IntType) <= sizeof(ssize_t), "Implicit narrowing is not permitted.");
+    return static_cast<ssize_t>(val);
+}
+
 /// 用于将先前未知的 C++ 实例转换为 对应脚本对象的方法。
 enum class return_value_policy : uint8_t {
     /**这是默认的返回值策略，当返回值是指针时，它会退而采用return_value_policy::take_ownership（

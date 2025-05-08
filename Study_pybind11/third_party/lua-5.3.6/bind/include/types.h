@@ -794,8 +794,11 @@ protected:
     using reference = const handle; // PR #3263
     using pointer = arrow_proxy<const handle>;
 
+    //PySequence_Fast_ITEMS(p)： ret 指针数组
     sequence_fast_readonly(handle obj, ssize_t n) :
-        ptr(PySequence_Fast_ITEMS(obj.ptr()) + n) {}
+       // ptr(PySequence_Fast_ITEMS(obj.ptr()) + n)
+        ptr(IObject::sequence_Fast_ITEMS(obj.ptr()) + n)
+    {}
 
     // NOLINTNEXTLINE(readability-const-return-type) // PR #3263
     reference dereference() const { return *ptr; }
@@ -845,7 +848,7 @@ protected:
     // NOLINTNEXTLINE(readability-const-return-type) // PR #3263
     reference dereference() const { return {key, value}; }
     void increment() {
-        if (PyDict_Next(obj.ptr(), &pos, &key, &value) == 0) {
+        if (IObject::dict_Next(obj.ptr(), &pos, &key, &value) == 0) {
             pos = -1;
         }
     }
@@ -853,7 +856,8 @@ protected:
 
 private:
     handle obj;
-    Object *key = nullptr, *value = nullptr;
+    Object *key {nullptr};
+    Object *value {nullptr};
     ssize_t pos = -1;
 };
 BIND11_NAMESPACE_END(iterator_policies)
@@ -870,17 +874,17 @@ using sequence_iterator = generic_iterator<iterator_policies::sequence_slow_read
 using dict_iterator = generic_iterator<iterator_policies::dict_readonly>;
 
 inline bool PyIterable_Check(Object *obj) {
-    Object *iter = Object_GetIter(obj);
+    Object *iter = IObject::getIter(obj);
     if (iter) {
-        Py_DECREF(iter);
+        iter->decRef();
         return true;
     }
-    PyErr_Clear();
+    hError_clear();
     return false;
 }
 
-inline bool PyNone_Check(Object *o) { return o == Py_None; }
-inline bool PyEllipsis_Check(Object *o) { return o == Py_Ellipsis; }
+inline bool PyNone_Check(Object *o) { return IObject::isNone(o); }
+inline bool PyEllipsis_Check(Object *o) { return IObject::isEllipsis(o); }
 
 #ifdef BIND11_STR_LEGACY_PERMISSIVE
 inline bool PyUnicode_Check_Permissive(Object *o) {
@@ -891,7 +895,7 @@ inline bool PyUnicode_Check_Permissive(Object *o) {
 #    define BIND11_STR_CHECK_FUN PyUnicode_Check
 #endif
 
-inline bool PyStaticMethod_Check(Object *o) { return o->ob_type == &PyStaticMethod_Type; }
+inline bool PyStaticMethod_Check(Object *o) { return IObject::isStaticMethod(o); }
 
 class kwargs_proxy : public handle {
 public:
@@ -1052,8 +1056,8 @@ public:
 
 private:
     void advance() {
-        value = reinterpret_steal<object>(PyIter_Next(m_ptr));
-        if (PyErr_Occurred()) {
+        value = reinterpret_steal<object>(IObject::iter_Next(m_ptr));
+        if (hError_Occurred()) {
             throw error_already_set();
         }
     }
@@ -1067,7 +1071,7 @@ public:
     BIND11_OBJECT(type, object, True_check)
 
     /// Return a type handle from a handle or an object
-    static handle handle_of(handle h) { return handle((Object *) Py_TYPE(h.ptr())); }
+    static handle handle_of(handle h) { return handle((Object *) IObject::type(h.ptr())); }
 
     /// Return a type object from a handle or an object
     static type of(handle h) { return type(type::handle_of(h), borrowed_t{}); }
@@ -1097,11 +1101,12 @@ class bytes;
 
 class str : public object {
 public:
-    BIND11_OBJECT_CVT(str, object, BIND11_STR_CHECK_FUN, raw_str)
+    //BIND11_OBJECT_CVT(str, object, BIND11_STR_CHECK_FUN, raw_str)
+    BIND11_OBJECT_CVT(str, object, hUnicode_Check, raw_str)
 
     template <typename SzType, detail::enable_if_t<std::is_integral<SzType>::value, int> = 0>
     str(const char *c, const SzType &n)
-        : object(PyUnicode_FromStringAndSize(c, ssize_t_cast(n)), stolen_t{}) {
+        : object(hUnicode_FromStringAndSize(c, ssize_t_cast(n)), stolen_t{}) {
         if (!m_ptr) {
             BIND11_fail("Could not allocate string object!");
         }
@@ -1110,7 +1115,7 @@ public:
     // 'explicit' is explicitly omitted from the following constructors to allow implicit
     // conversion to py::str from C++ string-like objects
     // NOLINTNEXTLINE(google-explicit-constructor)
-    str(const char *c = "") : object(PyUnicode_FromString(c), stolen_t{}) {
+    str(const char *c = "") : object(hUnicode_FromString(c), stolen_t{}) {
         if (!m_ptr) {
             BIND11_fail("Could not allocate string object!");
         }
@@ -1148,15 +1153,15 @@ public:
     // NOLINTNEXTLINE(google-explicit-constructor)
     operator std::string() const {
         object temp = *this;
-        if (PyUnicode_Check(m_ptr)) {
-            temp = reinterpret_steal<object>(PyUnicode_AsUTF8String(m_ptr));
+        if (hUnicode_Check(m_ptr)) {
+            temp = reinterpret_steal<object>(hUnicode_AsUTF8String(m_ptr));
             if (!temp) {
                 throw error_already_set();
             }
         }
         char *buffer = nullptr;
         ssize_t length = 0;
-        if (PyBytes_AsStringAndSize(temp.ptr(), &buffer, &length) != 0) {
+        if (hBytes_AsStringAndSize(temp.ptr(), &buffer, &length) != 0) {
             throw error_already_set();
         }
         return std::string(buffer, (size_t) length);
@@ -1170,7 +1175,7 @@ public:
 private:
     /// Return string representation -- always returns a new reference, even if already a str
     static Object *raw_str(Object *op) {
-        Object *str_value = Object_Str(op);
+        Object *str_value = IObject::str(op);
         return str_value;
     }
 };
@@ -1187,11 +1192,11 @@ inline str operator"" _s(const char *s, size_t size) { return {s, size}; }
 /// @{
 class bytes : public object {
 public:
-    BIND11_OBJECT(bytes, object, BIND11_BYTES_CHECK)
+    BIND11_OBJECT(bytes, object, hBytes_Check)
 
     // Allow implicit conversion:
     // NOLINTNEXTLINE(google-explicit-constructor)
-    bytes(const char *c = "") : object(BIND11_BYTES_FROM_STRING(c), stolen_t{}) {
+    bytes(const char *c = "") : object(hBytes_FromString(c), stolen_t{}) {
         if (!m_ptr) {
             BIND11_fail("Could not allocate bytes object!");
         }
@@ -1199,7 +1204,7 @@ public:
 
     template <typename SzType, detail::enable_if_t<std::is_integral<SzType>::value, int> = 0>
     bytes(const char *c, const SzType &n)
-        : object(BIND11_BYTES_FROM_STRING_AND_SIZE(c, ssize_t_cast(n)), stolen_t{}) {
+        : object(hBytes_FromStringAndSize(c, ssize_t_cast(n)), stolen_t{}) {
         if (!m_ptr) {
             BIND11_fail("Could not allocate bytes object!");
         }
@@ -1231,7 +1236,7 @@ private:
     T string_op() const {
         char *buffer = nullptr;
         ssize_t length = 0;
-        if (PyBytes_AsStringAndSize(m_ptr, &buffer, &length) != 0) {
+        if (hBytes_AsStringAndSize(m_ptr, &buffer, &length) != 0) {
             throw error_already_set();
         }
         return {buffer, static_cast<size_t>(length)};
@@ -1243,18 +1248,18 @@ private:
 
 inline bytes::bytes(const BIND11::str &s) {
     object temp = s;
-    if (PyUnicode_Check(s.ptr())) {
-        temp = reinterpret_steal<object>(PyUnicode_AsUTF8String(s.ptr()));
+    if (hUnicode_Check(s.ptr())) {
+        temp = reinterpret_steal<object>(hUnicode_AsUTF8String(s.ptr()));
         if (!temp) {
             throw error_already_set();
         }
     }
     char *buffer = nullptr;
     ssize_t length = 0;
-    if (PyBytes_AsStringAndSize(temp.ptr(), &buffer, &length) != 0) {
+    if (hBytes_AsStringAndSize(temp.ptr(), &buffer, &length) != 0) {
         throw error_already_set();
     }
-    auto obj = reinterpret_steal<object>(BIND11_BYTES_FROM_STRING_AND_SIZE(buffer, length));
+    auto obj = reinterpret_steal<object>(hBytes_FromStringAndSize(buffer, length));
     if (!obj) {
         BIND11_fail("Could not allocate bytes object!");
     }
@@ -1264,10 +1269,10 @@ inline bytes::bytes(const BIND11::str &s) {
 inline str::str(const bytes &b) {
     char *buffer = nullptr;
     ssize_t length = 0;
-    if (PyBytes_AsStringAndSize(b.ptr(), &buffer, &length) != 0) {
+    if (hBytes_AsStringAndSize(b.ptr(), &buffer, &length) != 0) {
         throw error_already_set();
     }
-    auto obj = reinterpret_steal<object>(PyUnicode_FromStringAndSize(buffer, length));
+    auto obj = reinterpret_steal<object>(hUnicode_FromStringAndSize(buffer, length));
     if (!obj) {
         BIND11_fail("Could not allocate string object!");
     }
@@ -1278,11 +1283,11 @@ inline str::str(const bytes &b) {
 /// @{
 class bytearray : public object {
 public:
-    BIND11_OBJECT_CVT(bytearray, object, PyByteArray_Check, PyByteArray_FromObject)
+    BIND11_OBJECT_CVT(bytearray, object, hByteArray_Check, hByteArray_FromObject)
 
     template <typename SzType, detail::enable_if_t<std::is_integral<SzType>::value, int> = 0>
     bytearray(const char *c, const SzType &n)
-        : object(PyByteArray_FromStringAndSize(c, ssize_t_cast(n)), stolen_t{}) {
+        : object(hByteArray_FromStringAndSize(c, ssize_t_cast(n)), stolen_t{}) {
         if (!m_ptr) {
             BIND11_fail("Could not allocate bytearray object!");
         }
@@ -1292,12 +1297,10 @@ public:
 
     explicit bytearray(const std::string &s) : bytearray(s.data(), s.size()) {}
 
-    size_t size() const { return static_cast<size_t>(PyByteArray_Size(m_ptr)); }
+    size_t size() const { return static_cast<size_t>(hByteArray_Size(m_ptr)); }
 
     explicit operator std::string() const {
-        char *buffer = PyByteArray_AS_STRING(m_ptr);
-        ssize_t size = PyByteArray_GET_SIZE(m_ptr);
-        return std::string(buffer, static_cast<size_t>(size));
+        return hByteArray_to_rawStr(m_ptr);
     }
 };
 // Note: breathe >= 4.17.0 will fail to build docs if the below two constructors
@@ -1309,33 +1312,33 @@ public:
 class none : public object {
 public:
     BIND11_OBJECT(none, object, detail::PyNone_Check)
-    none() : object(Py_None, borrowed_t{}) {}
+    none() : object(IObject::getNone(), borrowed_t{}) {}
 };
 
 class ellipsis : public object {
 public:
     BIND11_OBJECT(ellipsis, object, detail::PyEllipsis_Check)
-    ellipsis() : object(Py_Ellipsis, borrowed_t{}) {}
+    ellipsis() : object(IObject::getEllipsis(), borrowed_t{}) {}
 };
 
 class bool_ : public object {
 public:
-    BIND11_OBJECT_CVT(bool_, object, PyBool_Check, raw_bool)
-    bool_() : object(Py_False, borrowed_t{}) {}
+    BIND11_OBJECT_CVT(bool_, object, hBool_Check, raw_bool)
+    bool_() : object(IObject::getFalse(), borrowed_t{}) {}
     // Allow implicit conversion from and to `bool`:
     // NOLINTNEXTLINE(google-explicit-constructor)
-    bool_(bool value) : object(value ? Py_True : Py_False, borrowed_t{}) {}
+    bool_(bool value) : object(value ? IObject::getTrue() : IObject::getFalse(), borrowed_t{}) {}
     // NOLINTNEXTLINE(google-explicit-constructor)
-    operator bool() const { return (m_ptr != nullptr) && PyLong_AsLong(m_ptr) != 0; }
+    operator bool() const { return (m_ptr != nullptr) && hLong_AsLong(m_ptr) != 0; }
 
 private:
     /// Return the truth value of an object -- always returns a new reference
     static Object *raw_bool(Object *op) {
-        const auto value = Object_IsTrue(op);
+        const auto value = hObject_IsTrue(op);
         if (value == -1) {
             return nullptr;
         }
-        return handle(value != 0 ? Py_True : Py_False).inc_ref().ptr();
+        return handle(value != 0 ? IObject::getTrue() : IObject::getFalse()).inc_ref().ptr();
     }
 };
 
@@ -1347,11 +1350,11 @@ BIND11_NAMESPACE_BEGIN(detail)
 template <typename Unsigned>
 Unsigned as_unsigned(Object *o) {
     if (BIND11_SILENCE_MSVC_C4127(sizeof(Unsigned) <= sizeof(unsigned long))) {
-        unsigned long v = PyLong_AsUnsignedLong(o);
-        return v == (unsigned long) -1 && PyErr_Occurred() ? (Unsigned) -1 : (Unsigned) v;
+        unsigned long v = hLong_AsUnsignedLong(o);
+        return v == (unsigned long) -1 && hError_Occurred() ? (Unsigned) -1 : (Unsigned) v;
     }
-    unsigned long long v = PyLong_AsUnsignedLongLong(o);
-    return v == (unsigned long long) -1 && PyErr_Occurred() ? (Unsigned) -1 : (Unsigned) v;
+    unsigned long long v = hLong_AsUnsignedLongLong(o);
+    return v == (unsigned long long) -1 && hError_Occurred() ? (Unsigned) -1 : (Unsigned) v;
 }
 BIND11_NAMESPACE_END(detail)
 
@@ -1936,7 +1939,7 @@ inline size_t len(handle h) {
 /// Get the length hint of a Python object.
 /// Returns 0 when this cannot be determined.
 inline size_t len_hint(handle h) {
-    ssize_t result = IObject::LengthHint(h.ptr(), 0);
+    ssize_t result = IObject::lengthHint(h.ptr(), 0);
     if (result < 0) {
         // Sometimes a length can't be determined at all (eg generators)
         // In which case simply return 0
@@ -1957,7 +1960,7 @@ inline str repr(handle h) {
 
 inline iterator iter(handle obj) {
     //Object *result = Object_GetIter(obj.ptr());
-    Object *result = IObject::iterator(obj.ptr());
+    Object *result = IObject::getIter(obj.ptr());
     if (!result) {
         throw error_already_set();
     }
